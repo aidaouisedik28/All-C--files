@@ -62,3 +62,74 @@
 
       }
   }
+
+
+
+
+
+
+
+
+// UP BUTTON
+   private Dictionary<long, int> originalvalues = new Dictionary<long, int>();
+   private Dictionary<long, int> originallvalues = new Dictionary<long, int>();
+   private Dictionary<long, int> originalvalues2 = new Dictionary<long, int>();
+   private Dictionary<long, int> originallvalues2 = new Dictionary<long, int>();
+
+
+   string AOBHEAD = "FF FF FF FF 00 00 00 00 00 00 ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? 00 00 00 A5 43";
+   string READHEAD = "0xAA";
+   string writeHEAD = "0xA6";
+
+// IN BUTTON
+
+
+         try
+         {
+             Stopwatch stopwatch = new Stopwatch();
+             stopwatch.Start();
+
+             // ربط اللعبة
+             if (!MEM.SetProcess(new[] { "HD-Player" }))
+             {
+                 PlaySound("desactivar.wav");
+                 return;
+             }
+
+             long readOffset = Convert.ToInt64(READHEAD, 16);
+             long writeOffset = Convert.ToInt64(writeHEAD, 16);
+
+
+             var result = await MEM.AoBScan(AOBHEAD);
+
+             if (result == null || !result.Any())
+             {
+                 PlaySound("desactivar.wav");
+                 return;
+             }
+
+             foreach (var currentAddress in result)
+             {
+                 long headAddr = currentAddress + readOffset;
+                 long chestAddr = currentAddress + writeOffset;
+
+      
+                 int headValue = MEM.ReadInt(headAddr);
+                 int chestValue = MEM.ReadInt(chestAddr);
+
+  
+                 MEM.AobReplace(chestAddr, headValue);
+                 MEM.AobReplace(headAddr, chestValue);
+             }
+
+             stopwatch.Stop();
+  
+             PlaySound("activate.wav");
+         }
+         catch (Exception ex)
+         {   
+             PlaySound("desactivar.wav");
+         }
+
+
+

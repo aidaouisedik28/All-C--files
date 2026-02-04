@@ -8,67 +8,65 @@
 
 /////////////////////////////////////////////////////////////////////////////////////
 
-  {
-      orginalValues9.Clear();
-      orginalValues10.Clear();
-      orginalValues11.Clear();
-      orginalValues12.Clear();
+             PlaySound("CLICK.wav");
+            try
+            {
+                orginalValues9.Clear();
+                orginalValues10.Clear();
+                orginalValues11.Clear();
+                orginalValues12.Clear();
+
+                long readOffset = Convert.ToInt64(Offset1);
+                long writeOffset = Convert.ToInt64(offset2);
+
+                int proc = Process.GetProcessesByName("HD-Player")[0].Id;
+                MEM.OpenProcess(proc);
+
+                var result = await MEM.AoBScan(0x0000000000000000, 0x00007fffffffffff, "FF FF FF FF 00 00 00 00 00 00 ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? 00 00 00 A5 43", true, true);
 
 
-      Int64 readOffset = Convert.ToInt64(Offset5);
-      Int64 writeOffset = Convert.ToInt64(offset6);
+                if (result != null && result.Any())
+                {
+                    foreach (var addrObj in result)
+                    {
+                        long currentAddress = Convert.ToInt64(addrObj); // ✅ التصحيح هنا
 
-      Int32 proc = Process.GetProcessesByName("HD-Player")[0].Id;
-      meme.OpenProcess(proc);
+                        long headAddr = currentAddress + readOffset;
+                        long chestAddr = currentAddress + writeOffset;
 
-      var result = await meme.AoBScan(0x0000000000000000, 0x00007fffffffffff, "FF FF FF FF FF FF FF FF 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? 00 00 00 00 00 00 00 00 00 00 00 00 A5 43", true, true);
+                        int headValue = BitConverter.ToInt32(
+                            MEM.SunIsKind(headAddr.ToString("X"), sizeof(int)), 0);
 
-      if (result.Count() != 0)
-      {
-          foreach (var CurrentAddress in result)
-          {
-              Int64 addressToSave = CurrentAddress + writeOffset;
-              var currentBytes = meme.SunIsKind(addressToSave.ToString("X"), sizeof(int));
-              int currentValue = BitConverter.ToInt32(currentBytes, 0); orginalValues9[addressToSave] = currentValue;
-              Int64 addressToSave9 = CurrentAddress + readOffset;
+                        int chestValue = BitConverter.ToInt32(
+                            MEM.SunIsKind(chestAddr.ToString("X"), sizeof(int)), 0);
 
-              var currentBytes9 = meme.SunIsKind(addressToSave9.ToString("X"), sizeof(int));
-              int currentValue9 = BitConverter.ToInt32(currentBytes9, 0); orginalValues10[addressToSave9] = currentValue9;
-              Int64 headbytes = CurrentAddress + readOffset;
-              Int64 chestbytes = CurrentAddress + writeOffset;
+                        orginalValues9[chestAddr] = chestValue;
+                        orginalValues10[headAddr] = headValue;
 
-              var bytes = meme.SunIsKind(headbytes.ToString("X"), sizeof(int));
-              int Read = BitConverter.ToInt32(bytes, 0);
-              var bytes2 = meme.SunIsKind(chestbytes.ToString("X"), sizeof(int));
-              int Read2 = BitConverter.ToInt32(bytes2, 0);
+                        MEM.WriteMemory(chestAddr.ToString("X"), "int", headValue.ToString());
+                        MEM.WriteMemory(headAddr.ToString("X"), "int", chestValue.ToString());
 
-              meme.WriteMemory(chestbytes.ToString("X"), "int", Read.ToString());
-              meme.WriteMemory(headbytes.ToString("X"), "int", Read2.ToString());
+                        orginalValues11[chestAddr] = BitConverter.ToInt32(
+                            MEM.SunIsKind(chestAddr.ToString("X"), sizeof(int)), 0);
 
-              Int64 addressToSave1 = CurrentAddress + writeOffset;
-              var currentBytes1 = meme.SunIsKind(addressToSave1.ToString("X"), sizeof(int));
-              int curentValue1 = BitConverter.ToInt32(currentBytes1, 0); orginalValues11[addressToSave1] = curentValue1;
+                        orginalValues12[headAddr] = BitConverter.ToInt32(
+                            MEM.SunIsKind(headAddr.ToString("X"), sizeof(int)), 0);
+                    }
 
-              Int64 addressToSave19 = CurrentAddress + readOffset;
-              var currentBytes19 = meme.SunIsKind(addressToSave19.ToString("X"), sizeof(int));
-              int currentValues19 = BitConverter.ToInt32(currentBytes19, 0); orginalValues12[addressToSave19] = currentValues19;
-          }
-          orginalValues9.Clear();
-          orginalValues10.Clear();
-          orginalValues11.Clear();
-          orginalValues12.Clear();
-          MessageBox.Show("Aimbot Head Active");
-          Console.Beep(900, 600);
+                }
 
-      }
-  }
-
-
-
-
-
-
-
+                // تشغيل صوت التفعيل
+                PlaySound("activate.wav");
+            }
+            catch
+            {
+                // أي خطأ → صوت التعطيل
+                PlaySound("desactivar.wav");
+            }
+        }
+    }
+}
+    
 
 // UP BUTTON
    private Dictionary<long, int> originalvalues = new Dictionary<long, int>();

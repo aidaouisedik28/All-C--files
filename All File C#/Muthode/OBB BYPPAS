@@ -1,1 +1,317 @@
+  private async void C5_CheckedChanged(object sender, EventArgs e)
+  {
+      PlaySound("CLICK.wav");
+      if (!MEM.SetProcess(new[] { "HD-Player" }))
+      {
 
+          Console.Beep(240, 300);
+          return;
+      }
+
+
+
+      string searchPattern = "dc 52 39 bd 27 c1 8b 3c c0 d0 f8 b9";
+      string replacePattern = "db 42 32 3e 33 c1 18 3c c2 d0 f7 b3";
+
+      string searchPattern1 = "63 71 b0 bd 90 98 74 bb";
+      string replacePattern1 = "cd dc 79 44 90 98 74 bb";
+
+      string searchPattern2 = "7b f9 6c bd 58 34 09 bb b0 60 be ba";
+      string replacePattern2 = "cd dc 79 44 58 34 09 bb b0 60 be ba";
+
+      string searchPattern3 = "54 1b 87 bd 90 c6 d7 ba 80 54 99 b9";
+      string replacePattern3 = "cd dc 79 44 90 c6 d7 ba 80 54 99 b9";
+
+      string searchPattern4 = "71 02 87 bd 90 fd d7 ba 40 18 98 39";
+      string replacePattern4 = "cd dc 79 44 90 fd d7 ba 40 18 98 39";
+
+      string searchPattern5 = "cc f8 6c bd 40 d2 ce b9 58 64 be 3a";
+      string replacePattern5 = "cd dc 79 44 40 d2 ce b9 58 64 be 3a";
+
+      string searchPattern6 = "80 13 95 bc 30 ff 37 bb 00 fd 78 3b";
+      string replacePattern6 = "cd dc 79 44 30 ff 37 bb 00 fd 78 3b";
+
+      string searchPattern7 = "1f 93 db bc 90 bf 84 3a 20 a6 bb ba";
+      string replacePattern7 = "cd dc 79 44 90 bf 84 3a 20 a6 bb ba";
+
+      string searchPattern8 = "bc 19 fd bd b0 e3 a9 3a 80 42 23 b9";
+      string replacePattern8 = "42 e0 56 43 b0 e3 a9 3a 80 42 23 b9";
+
+      string searchPattern9 = "7d 1a 89 bd 50 26 9f 3b";
+      string replacePattern9 = "00 00 70 41 00 00 70 41";
+
+      string searchPattern10 = "0e e4 f2 bd cd 99 04 bc";
+      string replacePattern10 = "00 00 70 41 00 00 70 41";
+
+      string searchPattern11 = "cd dc 79 44 90 98 74 bb";
+      string replacePattern11 = "00 00 70 41 00 00 70 41";
+
+      string searchPattern12 = "a8 e7 71 3d e4 8c 02 3e 00 00 00 00 db 42 32 3e 33 c1 18 3c c2 d0 f7 b3";
+      string replacePattern12 = "59 df ca 3d e4 8c 02 3e 00 00 00 00 00 00 00 3e 0a d7 23 3d d2 a5 f9 bc";
+
+      string searchPattern13 = "a8 e7 71 3d e4 8c 02 3e 00 00 00 00 dc 52 39 bd 27 c1 8b 3c c0 d0 f8 b9";
+      string replacePattern13 = "59 df ca 3d e4 8c 02 3e 00 00 00 00 00 00 00 3e 0a d7 23 3d d2 a5 f9 bc";
+
+      string searchPattern14 = "a8 e7 71 3d e4 8c 02 3e 00 00 00 00 db 42 32 3e 33 c1 18 3c c2 d0 f7 b3";
+      string replacePattern14 = "59 df ca 3d e4 8c 02 3e 00 00 00 00 00 00 00 3e 0a d7 23 3d d2 a5 f9 bc";
+
+
+
+      bool injected = false;
+
+
+
+      IEnumerable<long> results = await MEM.AoBScan(searchPattern);
+      if (results.Any())
+      {
+          foreach (var address in results)
+          {
+              if (MEM.AobReplace(address, replacePattern))
+                  injected = true;
+          }
+      }
+      // 1
+      IEnumerable<long> results1 = await MEM.AoBScan(searchPattern1);
+      if (results1.Any())
+      {
+          foreach (var address in results1)
+          {
+              if (MEM.AobReplace(address, replacePattern1))
+                  injected = true;
+          }
+      }
+
+      // 2
+      IEnumerable<long> results2 = await MEM.AoBScan(searchPattern2);
+      if (results2.Any())
+      {
+          foreach (var address in results2)
+          {
+              if (MEM.AobReplace(address, replacePattern2))
+                  injected = true;
+          }
+      }
+
+      // 3
+      IEnumerable<long> results3 = await MEM.AoBScan(searchPattern3);
+      if (results3.Any())
+      {
+          foreach (var address in results3)
+          {
+              if (MEM.AobReplace(address, replacePattern3))
+                  injected = true;
+          }
+      }
+
+      // 4
+      IEnumerable<long> results4 = await MEM.AoBScan(searchPattern4);
+      if (results4.Any())
+      {
+          foreach (var address in results4)
+          {
+              if (MEM.AobReplace(address, replacePattern4))
+                  injected = true;
+          }
+      }
+
+      // 5
+      IEnumerable<long> results5 = await MEM.AoBScan(searchPattern5);
+      if (results5.Any())
+      {
+          foreach (var address in results5)
+          {
+              if (MEM.AobReplace(address, replacePattern5))
+                  injected = true;
+          }
+      }
+
+      // 6
+      IEnumerable<long> results6 = await MEM.AoBScan(searchPattern6);
+      if (results6.Any())
+      {
+          foreach (var address in results6)
+          {
+              if (MEM.AobReplace(address, replacePattern6))
+                  injected = true;
+          }
+      }
+
+      // 7
+      IEnumerable<long> results7 = await MEM.AoBScan(searchPattern7);
+      if (results7.Any())
+      {
+          foreach (var address in results7)
+          {
+              if (MEM.AobReplace(address, replacePattern7))
+                  injected = true;
+          }
+      }
+
+      // 8
+      IEnumerable<long> results8 = await MEM.AoBScan(searchPattern8);
+      if (results8.Any())
+      {
+          foreach (var address in results8)
+          {
+              if (MEM.AobReplace(address, replacePattern8))
+                  injected = true;
+          }
+      }
+
+      // 9
+      IEnumerable<long> results9 = await MEM.AoBScan(searchPattern9);
+      if (results9.Any())
+      {
+          foreach (var address in results9)
+          {
+              if (MEM.AobReplace(address, replacePattern9))
+                  injected = true;
+          }
+      }
+
+      // 10
+      IEnumerable<long> results10 = await MEM.AoBScan(searchPattern10);
+      if (results10.Any())
+      {
+          foreach (var address in results10)
+          {
+              if (MEM.AobReplace(address, replacePattern10))
+                  injected = true;
+          }
+      }
+
+      // 11
+      IEnumerable<long> results11 = await MEM.AoBScan(searchPattern11);
+      if (results11.Any())
+      {
+          foreach (var address in results11)
+          {
+              if (MEM.AobReplace(address, replacePattern11))
+                  injected = true;
+          }
+      }
+
+      // 12
+      IEnumerable<long> results12 = await MEM.AoBScan(searchPattern12);
+      if (results12.Any())
+      {
+          foreach (var address in results12)
+          {
+              if (MEM.AobReplace(address, replacePattern12))
+                  injected = true;
+          }
+      }
+
+      // 13
+      IEnumerable<long> results13 = await MEM.AoBScan(searchPattern13);
+      if (results13.Any())
+      {
+          foreach (var address in results13)
+          {
+              if (MEM.AobReplace(address, replacePattern13))
+                  injected = true;
+          }
+      }
+
+      IEnumerable<long> results14 = await MEM.AoBScan(searchPattern14);
+      if (results13.Any())
+      {
+          foreach (var address in results14)
+          {
+              if (MEM.AobReplace(address, replacePattern14))
+                  injected = true;
+          }
+      }
+
+      if (injected)
+      {
+
+      
+          PlaySound("activate.wav");
+          Console.Beep(400, 300);
+
+
+      }
+      else
+      {
+
+     
+          PlaySound("desactivar.wav");
+          Console.Beep(240, 300);
+
+      }
+  }
+
+
+
+
+
+V2
+
+
+
+
+
+
+
+private async void C5_CheckedChanged(object sender, EventArgs e)
+{
+    PlaySound("CLICK.wav");
+
+    if (!MEM.SetProcess(new[] { "HD-Player" }))
+    {
+        Console.Beep(240, 300);
+        PlaySound("desactivar.wav");
+        return;
+    }
+
+    // قائمة Search/Replace
+    var patterns = new (string search, string replace)[]
+    {
+        ("dc 52 39 bd 27 c1 8b 3c c0 d0 f8 b9", "db 42 32 3e 33 c1 18 3c c2 d0 f7 b3"),
+        ("63 71 b0 bd 90 98 74 bb", "cd dc 79 44 90 98 74 bb"),
+        ("7b f9 6c bd 58 34 09 bb b0 60 be ba", "cd dc 79 44 58 34 09 bb b0 60 be ba"),
+        ("54 1b 87 bd 90 c6 d7 ba 80 54 99 b9", "cd dc 79 44 90 c6 d7 ba 80 54 99 b9"),
+        ("71 02 87 bd 90 fd d7 ba 40 18 98 39", "cd dc 79 44 90 fd d7 ba 40 18 98 39"),
+        ("cc f8 6c bd 40 d2 ce b9 58 64 be 3a", "cd dc 79 44 40 d2 ce b9 58 64 be 3a"),
+        ("80 13 95 bc 30 ff 37 bb 00 fd 78 3b", "cd dc 79 44 30 ff 37 bb 00 fd 78 3b"),
+        ("1f 93 db bc 90 bf 84 3a 20 a6 bb ba", "cd dc 79 44 90 bf 84 3a 20 a6 bb ba"),
+        ("bc 19 fd bd b0 e3 a9 3a 80 42 23 b9", "42 e0 56 43 b0 e3 a9 3a 80 42 23 b9"),
+        ("7d 1a 89 bd 50 26 9f 3b", "00 00 70 41 00 00 70 41"),
+        ("0e e4 f2 bd cd 99 04 bc", "00 00 70 41 00 00 70 41"),
+        ("cd dc 79 44 90 98 74 bb", "00 00 70 41 00 00 70 41"),
+        ("a8 e7 71 3d e4 8c 02 3e 00 00 00 00 db 42 32 3e 33 c1 18 3c c2 d0 f7 b3",
+         "59 df ca 3d e4 8c 02 3e 00 00 00 00 00 00 00 3e 0a d7 23 3d d2 a5 f9 bc"),
+        ("a8 e7 71 3d e4 8c 02 3e 00 00 00 00 dc 52 39 bd 27 c1 8b 3c c0 d0 f8 b9",
+         "59 df ca 3d e4 8c 02 3e 00 00 00 00 00 00 00 3e 0a d7 23 3d d2 a5 f9 bc"),
+        ("a8 e7 71 3d e4 8c 02 3e 00 00 00 00 db 42 32 3e 33 c1 18 3c c2 d0 f7 b3",
+         "59 df ca 3d e4 8c 02 3e 00 00 00 00 00 00 00 3e 0a d7 23 3d d2 a5 f9 bc")
+    };
+
+    bool injected = false;
+
+    foreach (var (search, replace) in patterns)
+    {
+        IEnumerable<long> results = await MEM.AoBScan(search);
+        if (results.Any())
+        {
+            foreach (var address in results)
+            {
+                if (MEM.AobReplace(address, replace))
+                    injected = true;
+            }
+        }
+    }
+
+    // تشغيل الصوت المناسب
+    if (injected)
+    {
+        PlaySound("activate.wav");
+        Console.Beep(400, 300);
+    }
+    else
+    {
+        PlaySound("desactivar.wav");
+        Console.Beep(240, 300);
+    }
+}

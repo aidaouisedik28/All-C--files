@@ -1,14 +1,12 @@
-   private Dictionary<long, int> orginalValues9 = new Dictionary<long, int>();
-   private Dictionary<long, int> orginalValues10 = new Dictionary<long, int>();
-   private Dictionary<long, int> orginalValues11 = new Dictionary<long, int>();
-   private Dictionary<long, int> orginalValues12 = new Dictionary<long, int>();
+         private Dictionary<long, int> orginalValues9 = new Dictionary<long, int>();
+        private Dictionary<long, int> orginalValues10 = new Dictionary<long, int>();
+        private Dictionary<long, int> orginalValues11 = new Dictionary<long, int>();
+        private Dictionary<long, int> orginalValues12 = new Dictionary<long, int>();
 
-   long Offset5 = 0x80;
-   long offset6 = 0x7C;
-
-/////////////////////////////////////////////////////////////////////////////////////
-
-             PlaySound("CLICK.wav");
+        long Offset1 = 0xAA;
+        long offset2 = 0xA6;
+        private async void C1_CheckedChanged_1(object sender, EventArgs e)
+        {
             try
             {
                 orginalValues9.Clear();
@@ -19,54 +17,56 @@
                 long readOffset = Convert.ToInt64(Offset1);
                 long writeOffset = Convert.ToInt64(offset2);
 
-                int proc = Process.GetProcessesByName("HD-Player")[0].Id;
-                MEM.OpenProcess(proc);
-
-                var result = await MEM.AoBScan(0x0000000000000000, 0x00007fffffffffff, "FF FF FF FF 00 00 00 00 00 00 ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? 00 00 00 A5 43", true, true);
-
-
-                if (result != null && result.Any())
+                // ربط اللعبة - نفس الطريقة
+                if (!MEM.SetProcess(new[] { "HD-Player" }))
                 {
-                    foreach (var addrObj in result)
-                    {
-                        long currentAddress = Convert.ToInt64(addrObj); // ✅ التصحيح هنا
-
-                        long headAddr = currentAddress + readOffset;
-                        long chestAddr = currentAddress + writeOffset;
-
-                        int headValue = BitConverter.ToInt32(
-                            MEM.SunIsKind(headAddr.ToString("X"), sizeof(int)), 0);
-
-                        int chestValue = BitConverter.ToInt32(
-                            MEM.SunIsKind(chestAddr.ToString("X"), sizeof(int)), 0);
-
-                        orginalValues9[chestAddr] = chestValue;
-                        orginalValues10[headAddr] = headValue;
-
-                        MEM.WriteMemory(chestAddr.ToString("X"), "int", headValue.ToString());
-                        MEM.WriteMemory(headAddr.ToString("X"), "int", chestValue.ToString());
-
-                        orginalValues11[chestAddr] = BitConverter.ToInt32(
-                            MEM.SunIsKind(chestAddr.ToString("X"), sizeof(int)), 0);
-
-                        orginalValues12[headAddr] = BitConverter.ToInt32(
-                            MEM.SunIsKind(headAddr.ToString("X"), sizeof(int)), 0);
-                    }
-
+                    MessageBox.Show("Emulator not found!");
+                    return;
                 }
 
-                // تشغيل صوت التفعيل
-                PlaySound("activate.wav");
+                // البحث - نفس الطريقة (معامل واحد فقط)
+                var result = await MEM.AoBScan("FF FF FF FF 00 00 00 00 00 00 ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? 00 00 00 A5 43");
+
+                if (result == null || !result.Any())
+                {
+                    MessageBox.Show("Pattern not found!");
+                    return;
+                }
+
+                // المعالجة - نفس المنطق
+                foreach (var CurrentAddress in result)
+                {
+                    Int64 headAddr = CurrentAddress + readOffset;
+                    Int64 chestAddr = CurrentAddress + writeOffset;
+
+                    // قراءة القيم
+                    int headValue = MEM.ReadInt(headAddr);
+                    int chestValue = MEM.ReadInt(chestAddr);
+
+                    // حفظ القيم الأصلية
+                    orginalValues9[chestAddr] = chestValue;
+                    orginalValues10[headAddr] = headValue;
+
+                    // تبديل القيم
+                    MEM.AobReplace(chestAddr, headValue);
+                    MEM.AobReplace(headAddr, chestValue);
+
+                    // حفظ القيم الجديدة
+                    orginalValues11[chestAddr] = headValue;
+                    orginalValues12[headAddr] = chestValue;
+                }
+
+                MessageBox.Show("Aimbot Head Active");
+                Console.Beep(900, 600);
             }
-            catch
+            catch (Exception ex)
             {
-                // أي خطأ → صوت التعطيل
-                PlaySound("desactivar.wav");
+                MessageBox.Show($"Error: {ex.Message}");
             }
         }
     }
 }
-    
+
 
 // UP BUTTON
    private Dictionary<long, int> originalvalues = new Dictionary<long, int>();

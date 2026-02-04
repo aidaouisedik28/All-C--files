@@ -1,0 +1,68 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>library</OutputType>
+    <TargetFramework>net7.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <PublishAot>true</PublishAot>
+    <AllowUnsafeBlocks>True</AllowUnsafeBlocks>
+	<BuiltInComInteropSupport>true</BuiltInComInteropSupport>
+	<_SuppressWinFormsTrimError>true</_SuppressWinFormsTrimError>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Remove="AimLag.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Remove="clicksound.wav" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="clicksound.wav" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="AimLag.cs" />
+  </ItemGroup>
+  <ItemGroup>
+	<RdXmlFile Include="rd.xml" />
+  </ItemGroup>
+	    
+  <ItemGroup>
+    <PackageReference Include="ClickableTransparentOverlay" Version="9.3.0" />
+    <PackageReference Include="CuoreUI.Winforms" Version="2025.5.7" />
+    <PackageReference Include="DiscordMessenger" Version="2.0.2" />
+    <PackageReference Include="DNNE" Version="2.0.6" />
+    <PackageReference Include="Guna.UI2.WinForms" Version="2.0.4.6" />
+    <PackageReference Include="RestSharp" Version="112.1.0" />
+    <PackageReference Include="WinFormsComInterop" Version="0.5.0" />
+  </ItemGroup>
+	    
+  <ItemGroup>
+    <Reference Include="Helper">
+      <HintPath>D:\PROJECT\c sharp imgui done\c sharp imgui done\c sharp imgui\c sharp imgui\dark vvxfcx\Helper.dll</HintPath>
+    </Reference>
+    <Reference Include="Memory">
+      <HintPath>..\..\..\Downloads\Memory.dll</HintPath>
+    </Reference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Update="Properties\Resources.Designer.cs">
+      <DesignTime>True</DesignTime>
+      <AutoGen>True</AutoGen>
+      <DependentUpon>Resources.resx</DependentUpon>
+    </Compile>
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Update="Properties\Resources.resx">
+      <Generator>ResXFileCodeGenerator</Generator>
+      <LastGenOutput>Resources.Designer.cs</LastGenOutput>
+    </EmbeddedResource>
+  </ItemGroup>
+
+</Project>

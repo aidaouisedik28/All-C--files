@@ -254,20 +254,18 @@ V2
 
 
 
-private async void C5_CheckedChanged(object sender, EventArgs e)
-{
-    PlaySound("CLICK.wav");
+        private async void C5_CheckedChanged(object sender, EventArgs e)
+        {
+            PlaySound("CLICK.wav");
 
-    if (!MEM.SetProcess(new[] { "HD-Player" }))
-    {
-        Console.Beep(240, 300);
-        PlaySound("desactivar.wav");
-        return;
-    }
-
-    // قائمة Search/Replace
-    var patterns = new (string search, string replace)[]
-    {
+            if (!MEM.SetProcess(new[] { "HD-Player" }))
+            {
+                Console.Beep(240, 300);
+                PlaySound("desactivar.wav");
+                return;
+            }
+            var patterns = new (string search, string replace)[]
+            {
         ("dc 52 39 bd 27 c1 8b 3c c0 d0 f8 b9", "db 42 32 3e 33 c1 18 3c c2 d0 f7 b3"),
         ("63 71 b0 bd 90 98 74 bb", "cd dc 79 44 90 98 74 bb"),
         ("7b f9 6c bd 58 34 09 bb b0 60 be ba", "cd dc 79 44 58 34 09 bb b0 60 be ba"),
@@ -286,32 +284,30 @@ private async void C5_CheckedChanged(object sender, EventArgs e)
          "59 df ca 3d e4 8c 02 3e 00 00 00 00 00 00 00 3e 0a d7 23 3d d2 a5 f9 bc"),
         ("a8 e7 71 3d e4 8c 02 3e 00 00 00 00 db 42 32 3e 33 c1 18 3c c2 d0 f7 b3",
          "59 df ca 3d e4 8c 02 3e 00 00 00 00 00 00 00 3e 0a d7 23 3d d2 a5 f9 bc")
-    };
+            };
 
-    bool injected = false;
+            bool injected = false;
 
-    foreach (var (search, replace) in patterns)
-    {
-        IEnumerable<long> results = await MEM.AoBScan(search);
-        if (results.Any())
-        {
-            foreach (var address in results)
+            foreach (var (search, replace) in patterns)
             {
-                if (MEM.AobReplace(address, replace))
-                    injected = true;
+                IEnumerable<long> results = await MEM.AoBScan(search);
+                if (results.Any())
+                {
+                    foreach (var address in results)
+                    {
+                        if (MEM.AobReplace(address, replace))
+                            injected = true;
+                    }
+                }
+            }
+            if (injected)
+            {
+                PlaySound("activate.wav");
+                Console.Beep(400, 300);
+            }
+            else
+            {
+                PlaySound("desactivar.wav");
+                Console.Beep(240, 300);
             }
         }
-    }
-
-    // تشغيل الصوت المناسب
-    if (injected)
-    {
-        PlaySound("activate.wav");
-        Console.Beep(400, 300);
-    }
-    else
-    {
-        PlaySound("desactivar.wav");
-        Console.Beep(240, 300);
-    }
-}

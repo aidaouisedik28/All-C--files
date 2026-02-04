@@ -1,1088 +1,886 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
-using System.ComponentModel;
 using System.Diagnostics;
 using System.Globalization;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Security.Principal;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace UnovaMemory
 {
-	#region BeyondMem
-	public class UnovaMem
-	{
-		[DllImport("kernel32.dll")]
-		private static extern void GetSystemInfo(out UnovaMem.SYSTEM_INFO lpSystemInfo);
-		[DllImport("kernel32.dll")]
-		public static extern IntPtr OpenProcess(uint dwDesiredAccess, bool bInheritHandle, int dwProcessId);
-		[DllImport("kernel32")]
-		public static extern bool IsWow64Process(IntPtr hProcess, out bool lpSystemInfo);
-		[DllImport("kernel32.dll")]
-		private static extern bool VirtualProtectEx(IntPtr hProcess, UIntPtr lpAddress, IntPtr dwSize, UnovaMem.MemoryProtection flNewProtect, out UnovaMem.MemoryProtection lpflOldProtect);
-		[DllImport("kernel32.dll")]
-		private static extern bool WriteProcessMemory(IntPtr hProcess, UIntPtr lpBaseAddress, byte[] lpBuffer, UIntPtr nSize, IntPtr lpNumberOfBytesWritten);
-		[DllImport("kernel32.dll")]
-		private static extern bool ReadProcessMemory(IntPtr hProcess, UIntPtr lpBaseAddress, [Out] byte[] lpBuffer, UIntPtr nSize, IntPtr lpNumberOfBytesRead);
-		[DllImport("kernel32.dll")]
-		public static extern int CloseHandle(IntPtr hObject);
-		[DllImport("kernel32.dll", EntryPoint = "VirtualQueryEx")]
-		public static extern UIntPtr Native_VirtualQueryEx(IntPtr hProcess, UIntPtr lpAddress, out UnovaMem.MEMORY_BASIC_INFORMATION64 lpBuffer, UIntPtr dwLength);
-		[DllImport("kernel32.dll", EntryPoint = "VirtualQueryEx")]
-		public static extern UIntPtr Native_VirtualQueryEx(IntPtr hProcess, UIntPtr lpAddress, out UnovaMem.MEMORY_BASIC_INFORMATION32 lpBuffer, UIntPtr dwLength);
-		[DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
-		private static extern uint GetPrivateProfileString(string lpAppName, string lpKeyName, string lpDefault, StringBuilder lpReturnedString, uint nSize, string lpFileName);
-		[DllImport("kernel32.dll")]
-		private static extern bool ReadProcessMemory(IntPtr hProcess, UIntPtr lpBaseAddress, [Out] IntPtr lpBuffer, UIntPtr nSize, out ulong lpNumberOfBytesRead);
-		public string LoadCode(string name, string file)
-		{
-			StringBuilder stringBuilder = new StringBuilder(1024);
-			bool flag = file != "";
-			if (flag)
-			{
-				uint privateProfileString = UnovaMem.GetPrivateProfileString("codes", name, "", stringBuilder, (uint)stringBuilder.Capacity, file);
-			}
-			else
-			{
-				stringBuilder.Append(name);
-			}
-			return stringBuilder.ToString();
-		}
+    public class UnovaMem
+    {
+        #region WinAPI Imports
+        [DllImport("kernel32.dll")]
+        private static extern void GetSystemInfo(out SYSTEM_INFO lpSystemInfo);
+        
+        [DllImport("kernel32.dll")]
+        public static extern IntPtr OpenProcess(uint dwDesiredAccess, bool bInheritHandle, int dwProcessId);
+        
+        [DllImport("kernel32")]
+        public static extern bool IsWow64Process(IntPtr hProcess, out bool lpSystemInfo);
+        
+        [DllImport("kernel32.dll")]
+        private static extern bool VirtualProtectEx(IntPtr hProcess, UIntPtr lpAddress, IntPtr dwSize, 
+            MemoryProtection flNewProtect, out MemoryProtection lpflOldProtect);
+        
+        [DllImport("kernel32.dll")]
+        private static extern bool WriteProcessMemory(IntPtr hProcess, UIntPtr lpBaseAddress, byte[] lpBuffer, 
+            UIntPtr nSize, IntPtr lpNumberOfBytesWritten);
+        
+        [DllImport("kernel32.dll")]
+        private static extern bool ReadProcessMemory(IntPtr hProcess, UIntPtr lpBaseAddress, [Out] byte[] lpBuffer, 
+            UIntPtr nSize, IntPtr lpNumberOfBytesRead);
+        
+        [DllImport("kernel32.dll")]
+        private static extern bool ReadProcessMemory(IntPtr hProcess, UIntPtr lpBaseAddress, [Out] IntPtr lpBuffer, 
+            UIntPtr nSize, out ulong lpNumberOfBytesRead);
+        
+        [DllImport("kernel32.dll")]
+        public static extern int CloseHandle(IntPtr hObject);
+        
+        [DllImport("kernel32.dll", EntryPoint = "VirtualQueryEx")]
+        public static extern UIntPtr Native_VirtualQueryEx(IntPtr hProcess, UIntPtr lpAddress, 
+            out MEMORY_BASIC_INFORMATION64 lpBuffer, UIntPtr dwLength);
+        
+        [DllImport("kernel32.dll", EntryPoint = "VirtualQueryEx")]
+        public static extern UIntPtr Native_VirtualQueryEx(IntPtr hProcess, UIntPtr lpAddress, 
+            out MEMORY_BASIC_INFORMATION32 lpBuffer, UIntPtr dwLength);
+        
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
+        private static extern uint GetPrivateProfileString(string lpAppName, string lpKeyName, string lpDefault, 
+            StringBuilder lpReturnedString, uint nSize, string lpFileName);
+        #endregion
 
-        public byte[] AhReadMeFucker(string code, long length, string file = "")
+        #region Fields
+        private readonly Dictionary<string, IntPtr> _modules = new Dictionary<string, IntPtr>();
+        private ProcessModule _mainModule;
+        private Process _theProc;
+        private IntPtr _pHandle;
+        private bool _is64Bit;
+        private const uint MEM_PRIVATE = 0x20000;
+        private const uint MEM_IMAGE = 0x1000000;
+        private const uint PROCESS_ALL_ACCESS = 0x1F0FFF;
+        
+        // Cache for parsed codes to avoid re-parsing
+        private readonly ConcurrentDictionary<string, UIntPtr> _codeCache = new ConcurrentDictionary<string, UIntPtr>();
+        #endregion
+
+        #region Properties
+        public bool Is64Bit => _is64Bit;
+        public Process Process => _theProc;
+        public IntPtr ProcessHandle => _pHandle;
+        #endregion
+
+        #region Process Management
+        public bool OpenProcess(int pid)
         {
-            byte[] array = new byte[length];
-            UIntPtr code2 = this.GetCode(code, file, 8);
-            bool flag = !UnovaMem.ReadProcessMemory(this.pHandle, code2, array, (UIntPtr)(checked((ulong)length)), IntPtr.Zero);
-            byte[] result;
-            if (flag)
+            if (!IsAdmin())
             {
-                result = null;
+                Debug.WriteLine("WARNING: Not running as administrator!");
             }
-            else
+
+            if (pid <= 0)
             {
-                result = array;
+                Debug.WriteLine("ERROR: Invalid process ID.");
+                return false;
             }
+
+            if (_theProc?.Id == pid && _pHandle != IntPtr.Zero)
+            {
+                return true;
+            }
+
+            try
+            {
+                _theProc = Process.GetProcessById(pid);
+                
+                if (_theProc == null || !_theProc.Responding)
+                {
+                    Debug.WriteLine("ERROR: Process is not responding or null.");
+                    return false;
+                }
+
+                _pHandle = OpenProcess(PROCESS_ALL_ACCESS, true, pid);
+                
+                if (_pHandle == IntPtr.Zero)
+                {
+                    Debug.WriteLine($"ERROR: Failed to open process handle (Error: {Marshal.GetLastWin32Error()})");
+                    _theProc = null;
+                    return false;
+                }
+
+                Process.EnterDebugMode();
+                _mainModule = _theProc.MainModule;
+                GetModules();
+                
+                bool isWow64;
+                _is64Bit = Environment.Is64BitOperatingSystem && 
+                          IsWow64Process(_pHandle, out isWow64) && !isWow64;
+
+                Debug.WriteLine($"Process #{pid} opened successfully. Is64Bit: {_is64Bit}");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"ERROR: Exception opening process: {ex.Message}");
+                return false;
+            }
+        }
+
+        public void CloseProcess()
+        {
+            if (_pHandle != IntPtr.Zero)
+            {
+                CloseHandle(_pHandle);
+                _pHandle = IntPtr.Zero;
+            }
+
+            if (_theProc != null)
+            {
+                try
+                {
+                    Process.LeaveDebugMode();
+                }
+                catch { }
+                
+                _theProc = null;
+            }
+
+            _modules.Clear();
+            _codeCache.Clear();
+        }
+
+        private void GetModules()
+        {
+            if (_theProc == null) return;
+
+            _modules.Clear();
+            
+            try
+            {
+                foreach (ProcessModule module in _theProc.Modules)
+                {
+                    if (!string.IsNullOrEmpty(module.ModuleName) && !_modules.ContainsKey(module.ModuleName))
+                    {
+                        _modules.Add(module.ModuleName, module.BaseAddress);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"ERROR: Failed to enumerate modules: {ex.Message}");
+            }
+        }
+        #endregion
+
+        #region Memory Reading
+        public byte[] ReadBytes(string code, long length, string file = "")
+        {
+            byte[] buffer = new byte[length];
+            UIntPtr address = GetCode(code, file);
+            
+            if (address == UIntPtr.Zero)
+                return null;
+
+            if (!ReadProcessMemory(_pHandle, address, buffer, (UIntPtr)(ulong)length, IntPtr.Zero))
+                return null;
+
+            return buffer;
+        }
+
+        public T ReadMemory<T>(string code, string file = "") where T : struct
+        {
+            int size = Marshal.SizeOf<T>();
+            byte[] buffer = ReadBytes(code, size, file);
+            
+            if (buffer == null)
+                return default(T);
+
+            GCHandle handle = GCHandle.Alloc(buffer, GCHandleType.Pinned);
+            try
+            {
+                return Marshal.PtrToStructure<T>(handle.AddrOfPinnedObject());
+            }
+            finally
+            {
+                handle.Free();
+            }
+        }
+        #endregion
+
+        #region Memory Writing
+        public bool WriteMemory(string code, string type, string write, string file = "", Encoding stringEncoding = null)
+        {
+            byte[] data;
+            int size;
+
+            switch (type.ToLower())
+            {
+                case "float":
+                    data = BitConverter.GetBytes(Convert.ToSingle(write));
+                    size = 4;
+                    break;
+                    
+                case "int":
+                case "int32":
+                    data = BitConverter.GetBytes(Convert.ToInt32(write));
+                    size = 4;
+                    break;
+                    
+                case "long":
+                case "int64":
+                    data = BitConverter.GetBytes(Convert.ToInt64(write));
+                    size = 8;
+                    break;
+                    
+                case "double":
+                    data = BitConverter.GetBytes(Convert.ToDouble(write));
+                    size = 8;
+                    break;
+                    
+                case "byte":
+                    data = new byte[] { Convert.ToByte(write, 16) };
+                    size = 1;
+                    break;
+                    
+                case "2bytes":
+                    int val = Convert.ToInt32(write);
+                    data = new byte[] { (byte)(val & 0xFF), (byte)((val >> 8) & 0xFF) };
+                    size = 2;
+                    break;
+                    
+                case "bytes":
+                    data = ParseBytes(write);
+                    size = data.Length;
+                    break;
+                    
+                case "string":
+                    data = (stringEncoding ?? Encoding.UTF8).GetBytes(write);
+                    size = data.Length;
+                    break;
+                    
+                default:
+                    return false;
+            }
+
+            UIntPtr address = GetCode(code, file);
+            if (address == UIntPtr.Zero)
+                return false;
+
+            return WriteProcessMemory(_pHandle, address, data, (UIntPtr)(ulong)size, IntPtr.Zero);
+        }
+
+        private byte[] ParseBytes(string byteString)
+        {
+            if (string.IsNullOrWhiteSpace(byteString))
+                return new byte[0];
+
+            char[] separators = { ',', ' ' };
+            string[] parts = byteString.Split(separators, StringSplitOptions.RemoveEmptyEntries);
+            
+            byte[] result = new byte[parts.Length];
+            for (int i = 0; i < parts.Length; i++)
+            {
+                result[i] = Convert.ToByte(parts[i].Trim(), 16);
+            }
+            
+            return result;
+        }
+        #endregion
+
+        #region Address Resolution
+        public UIntPtr GetCode(string code, string file = "", int size = 8)
+        {
+            if (string.IsNullOrWhiteSpace(code))
+                return UIntPtr.Zero;
+
+            // Check cache first
+            string cacheKey = $"{code}|{file}";
+            if (_codeCache.TryGetValue(cacheKey, out UIntPtr cachedAddress))
+                return cachedAddress;
+
+            UIntPtr result = _is64Bit ? Get64BitCode(code, file, size == 8 ? 16 : size) 
+                                      : Get32BitCode(code, file, size);
+
+            // Cache the result
+            _codeCache.TryAdd(cacheKey, result);
+            
             return result;
         }
 
-        public Task<IEnumerable<long>> AoBScan(long start, long end, string search, bool readable, bool writable, bool executable, string file = "")
-		{
-			return Task.Run<IEnumerable<long>>(delegate ()
-			{
-				List<MemoryRegionResult> list = new List<MemoryRegionResult>();
-				string text = this.LoadCode(search, file);
-				string[] array = text.Split(new char[]
-				{
-					' '
-				});
-				byte[] aobPattern = new byte[array.Length];
-				byte[] mask = new byte[array.Length];
-				for (int i = 0; i < array.Length; i++)
-				{
-					string text2 = array[i];
-					bool flag = text2 == "??" || (text2.Length == 1 && text2 == "?");
-					if (flag)
-					{
-						mask[i] = 0;
-						array[i] = "0x00";
-					}
-					else
-					{
-						bool flag2 = char.IsLetterOrDigit(text2[0]) && text2[1] == '?';
-						if (flag2)
-						{
-							mask[i] = 240;
-							array[i] = text2[0].ToString() + "0";
-						}
-						else
-						{
-							bool flag3 = char.IsLetterOrDigit(text2[1]) && text2[0] == '?';
-							if (flag3)
-							{
-								mask[i] = 15;
-								array[i] = "0" + text2[1].ToString();
-							}
-							else
-							{
-								mask[i] = byte.MaxValue;
-							}
-						}
-					}
-				}
-				for (int j = 0; j < array.Length; j++)
-				{
-					aobPattern[j] = ((byte)(Convert.ToByte(array[j], 16) & mask[j]));
-				}
-				UnovaMem.SYSTEM_INFO system_INFO = default(UnovaMem.SYSTEM_INFO);
-				UnovaMem.GetSystemInfo(out system_INFO);
-				UIntPtr minimumApplicationAddress = system_INFO.minimumApplicationAddress;
-				UIntPtr maximumApplicationAddress = system_INFO.maximumApplicationAddress;
-				bool flag4 = start < (long)minimumApplicationAddress.ToUInt64();
-				if (flag4)
-				{
-					start = (long)minimumApplicationAddress.ToUInt64();
-				}
-				bool flag5 = end > (long)maximumApplicationAddress.ToUInt64();
-				if (flag5)
-				{
-					end = (long)maximumApplicationAddress.ToUInt64();
-				}
-				Debug.WriteLine(string.Concat(new string[]
-				{
-					"[DEBUG] memory scan starting... (start:0x",
-					start.ToString(this.MSize()),
-					" end:0x",
-					end.ToString(this.MSize()),
-					" time:",
-					DateTime.Now.ToString("h:mm:ss tt"),
-					")"
-				}));
-				UIntPtr uintPtr = new UIntPtr((ulong)start);
-				UnovaMem.MEMORY_BASIC_INFORMATION memory_BASIC_INFORMATION = default(UnovaMem.MEMORY_BASIC_INFORMATION);
-				while (this.VirtualQueryEx(this.pHandle, uintPtr, out memory_BASIC_INFORMATION).ToUInt64() != 0UL && uintPtr.ToUInt64() < (ulong)end && uintPtr.ToUInt64() + (ulong)memory_BASIC_INFORMATION.RegionSize > uintPtr.ToUInt64())
-				{
-					bool flag6 = memory_BASIC_INFORMATION.State == 4096U;
-					flag6 &= (memory_BASIC_INFORMATION.BaseAddress.ToUInt64() < maximumApplicationAddress.ToUInt64());
-					flag6 &= ((memory_BASIC_INFORMATION.Protect & 256U) == 0U);
-					flag6 &= ((memory_BASIC_INFORMATION.Protect & 1U) == 0U);
-					flag6 &= (memory_BASIC_INFORMATION.Type == this.MEM_PRIVATE || memory_BASIC_INFORMATION.Type == this.MEM_IMAGE);
-					bool flag7 = flag6;
-					if (flag7)
-					{
-						bool flag8 = (memory_BASIC_INFORMATION.Protect & 2U) > 0U;
-						bool flag9 = (memory_BASIC_INFORMATION.Protect & 4U) > 0U || (memory_BASIC_INFORMATION.Protect & 8U) > 0U || (memory_BASIC_INFORMATION.Protect & 64U) > 0U || (memory_BASIC_INFORMATION.Protect & 128U) > 0U;
-						bool flag10 = (memory_BASIC_INFORMATION.Protect & 16U) > 0U || (memory_BASIC_INFORMATION.Protect & 32U) > 0U || (memory_BASIC_INFORMATION.Protect & 64U) > 0U || (memory_BASIC_INFORMATION.Protect & 128U) > 0U;
-						flag8 &= readable;
-						flag9 &= writable;
-						flag10 &= executable;
-						flag6 &= (flag8 || flag9 || flag10);
-					}
-					bool flag11 = !flag6;
-					if (flag11)
-					{
-						uintPtr = new UIntPtr(memory_BASIC_INFORMATION.BaseAddress.ToUInt64() + (ulong)memory_BASIC_INFORMATION.RegionSize);
-					}
-					else
-					{
-						MemoryRegionResult item2 = new MemoryRegionResult
-						{
-							CurrentBaseAddress = uintPtr,
-							RegionSize = memory_BASIC_INFORMATION.RegionSize,
-							RegionBase = memory_BASIC_INFORMATION.BaseAddress
-						};
-						uintPtr = new UIntPtr(memory_BASIC_INFORMATION.BaseAddress.ToUInt64() + (ulong)memory_BASIC_INFORMATION.RegionSize);
-						bool flag12 = list.Count > 0;
-						if (flag12)
-						{
-							MemoryRegionResult memoryRegionResult = list[list.Count - 1];
-							bool flag13 = (ulong)memoryRegionResult.RegionBase + (ulong)memoryRegionResult.RegionSize == (ulong)memory_BASIC_INFORMATION.BaseAddress;
-							if (flag13)
-							{
-								list[list.Count - 1] = new MemoryRegionResult
-								{
-									CurrentBaseAddress = memoryRegionResult.CurrentBaseAddress,
-									RegionBase = memoryRegionResult.RegionBase,
-									RegionSize = memoryRegionResult.RegionSize + memory_BASIC_INFORMATION.RegionSize
-								};
-								continue;
-							}
-						}
-						list.Add(item2);
-					}
-				}
-				ConcurrentBag<long> bagResult = new ConcurrentBag<long>();
-				Parallel.ForEach<MemoryRegionResult>(list, delegate (MemoryRegionResult item, ParallelLoopState parallelLoopState, long index)
-				{
-					long[] array2 = this.CompareScan(item, aobPattern, mask);
-					foreach (long item3 in array2)
-					{
-						bagResult.Add(item3);
-					}
-				});
-				Debug.WriteLine("[DEBUG] memory scan completed. (time:" + DateTime.Now.ToString("h:mm:ss tt") + ")");
-				return (from c in bagResult.ToList<long>()
-						orderby c
-						select c).AsEnumerable<long>();
-			});
-		}
-		public string MSize()
-		{
-			bool is64Bit = this.Is64Bit;
-			string result;
-			if (is64Bit)
-			{
-				result = "x16";
-			}
-			else
-			{
-				result = "x8";
-			}
-			return result;
-		}
-		public void CloseProcess()
-		{
-			IntPtr intPtr = this.pHandle;
-			bool flag = false;
-			if (!flag)
-			{
-				UnovaMem.CloseHandle(this.pHandle);
-				this.theProc = null;
-			}
-		}
-		private bool _is64Bit;
-		public bool Is64Bit
-		{
-			get
-			{
-				return this._is64Bit;
-			}
-			private set
-			{
-				this._is64Bit = value;
-			}
-		}
-		private unsafe long[] CompareScan(MemoryRegionResult item, byte[] aobPattern, byte[] mask)
-		{
-			bool flag = mask.Length != aobPattern.Length;
-			if (flag)
-			{
-				throw new ArgumentException("aobPattern.Length != mask.Length");
-			}
-			IntPtr intPtr = Marshal.AllocHGlobal((int)item.RegionSize);
-			ulong num;
-			UnovaMem.ReadProcessMemory(this.pHandle, item.CurrentBaseAddress, intPtr, (UIntPtr)((ulong)item.RegionSize), out num);
-			int num2 = 0 - aobPattern.Length;
-			List<long> list = new List<long>();
-			do
-			{
-				num2 = this.FindPattern((byte*)intPtr.ToPointer(), (int)num, aobPattern, mask, num2 + aobPattern.Length);
-				bool flag2 = num2 >= 0;
-				if (flag2)
-				{
-					list.Add((long)((ulong)item.CurrentBaseAddress + (ulong)((long)num2)));
-				}
-			}
-			while (num2 != -1);
-			Marshal.FreeHGlobal(intPtr);
-			return list.ToArray();
-		}
-		private unsafe int FindPattern(byte* body, int bodyLength, byte[] pattern, byte[] masks, int start = 0)
-		{
-			int num = -1;
-			bool flag = bodyLength <= 0 || pattern.Length == 0 || start > bodyLength - pattern.Length || pattern.Length > bodyLength;
-			int result;
-			if (flag)
-			{
-				result = num;
-			}
-			else
-			{
-				for (int i = start; i <= bodyLength - pattern.Length; i++)
-				{
-					bool flag2 = (body[i] & masks[0]) == (pattern[0] & masks[0]);
-					if (flag2)
-					{
-						bool flag3 = true;
-						for (int j = 1; j <= pattern.Length - 1; j++)
-						{
-							bool flag4 = (body[i + j] & masks[j]) == (pattern[j] & masks[j]);
-							if (!flag4)
-							{
-								flag3 = false;
-								break;
-							}
-						}
-						bool flag5 = !flag3;
-						if (!flag5)
-						{
-							num = i;
-							break;
-						}
-					}
-				}
-				result = num;
-			}
-			return result;
-		}
-		public UIntPtr VirtualQueryEx(IntPtr hProcess, UIntPtr lpAddress, out UnovaMem.MEMORY_BASIC_INFORMATION lpBuffer)
-		{
-			bool flag = this.Is64Bit || IntPtr.Size == 8;
-			UIntPtr result;
-			if (flag)
-			{
-				UnovaMem.MEMORY_BASIC_INFORMATION64 memory_BASIC_INFORMATION = default(UnovaMem.MEMORY_BASIC_INFORMATION64);
-				UIntPtr uintPtr = UnovaMem.Native_VirtualQueryEx(hProcess, lpAddress, out memory_BASIC_INFORMATION, new UIntPtr((uint)Marshal.SizeOf(memory_BASIC_INFORMATION)));
-				lpBuffer.BaseAddress = memory_BASIC_INFORMATION.BaseAddress;
-				lpBuffer.AllocationBase = memory_BASIC_INFORMATION.AllocationBase;
-				lpBuffer.AllocationProtect = memory_BASIC_INFORMATION.AllocationProtect;
-				lpBuffer.RegionSize = (long)memory_BASIC_INFORMATION.RegionSize;
-				lpBuffer.State = memory_BASIC_INFORMATION.State;
-				lpBuffer.Protect = memory_BASIC_INFORMATION.Protect;
-				lpBuffer.Type = memory_BASIC_INFORMATION.Type;
-				result = uintPtr;
-			}
-			else
-			{
-				UnovaMem.MEMORY_BASIC_INFORMATION32 memory_BASIC_INFORMATION2 = default(UnovaMem.MEMORY_BASIC_INFORMATION32);
-				UIntPtr uintPtr = UnovaMem.Native_VirtualQueryEx(hProcess, lpAddress, out memory_BASIC_INFORMATION2, new UIntPtr((uint)Marshal.SizeOf(memory_BASIC_INFORMATION2)));
-				lpBuffer.BaseAddress = memory_BASIC_INFORMATION2.BaseAddress;
-				lpBuffer.AllocationBase = memory_BASIC_INFORMATION2.AllocationBase;
-				lpBuffer.AllocationProtect = memory_BASIC_INFORMATION2.AllocationProtect;
-				lpBuffer.RegionSize = (long)((ulong)memory_BASIC_INFORMATION2.RegionSize);
-				lpBuffer.State = memory_BASIC_INFORMATION2.State;
-				lpBuffer.Protect = memory_BASIC_INFORMATION2.Protect;
-				lpBuffer.Type = memory_BASIC_INFORMATION2.Type;
-				result = uintPtr;
-			}
-			return result;
-		}
-		public static void notify(string message)
-		{
-			Process.Start(new ProcessStartInfo("cmd.exe", $"/c start cmd /C \"color b && title Error && echo {message} && timeout /t 5\"")
-			{
-				CreateNoWindow = true,
-				RedirectStandardOutput = true,
-				RedirectStandardError = true,
-				UseShellExecute = false
-			});
-			Environment.Exit(0);
-		}
-		public UIntPtr Get64BitCode(string name, string path = "", int size = 16)
-		{
-			bool flag = path != "";
-			string text;
-			if (flag)
-			{
-				text = this.LoadCode(name, path);
-			}
-			else
-			{
-				text = name;
-			}
-			bool flag2 = text == "";
-			UIntPtr result;
-			if (flag2)
-			{
-				result = UIntPtr.Zero;
-			}
-			else
-			{
-				bool flag3 = text.Contains(" ");
-				if (flag3)
-				{
-					text.Replace(" ", string.Empty);
-				}
-				string text2 = text;
-				bool flag4 = text.Contains("+");
-				if (flag4)
-				{
-					text2 = text.Substring(text.IndexOf('+') + 1);
-				}
-				byte[] array = new byte[size];
-				bool flag5 = !text.Contains("+") && !text.Contains(",");
-				if (flag5)
-				{
-					result = new UIntPtr(Convert.ToUInt64(text, 16));
-				}
-				else
-				{
-					bool flag6 = text2.Contains(',');
-					if (flag6)
-					{
-						List<long> list = new List<long>();
-						string[] array2 = text2.Split(new char[]
-						{
-							','
-						});
-						foreach (string text3 in array2)
-						{
-							string text4 = text3;
-							bool flag7 = text3.Contains("0x");
-							if (flag7)
-							{
-								text4 = text3.Replace("0x", "");
-							}
-							bool flag8 = !text3.Contains("-");
-							long num;
-							if (flag8)
-							{
-								num = long.Parse(text4, NumberStyles.AllowHexSpecifier);
-							}
-							else
-							{
-								text4 = text4.Replace("-", "");
-								num = long.Parse(text4, NumberStyles.AllowHexSpecifier);
-								num *= -1L;
-							}
-							list.Add(num);
-						}
-						long[] array4 = list.ToArray();
-						bool flag9 = text.Contains("base") || text.Contains("main");
-						if (flag9)
-						{
-							UnovaMem.ReadProcessMemory(this.pHandle, (UIntPtr)((ulong)((long)this.mainModule.BaseAddress + array4[0])), array, (UIntPtr)((ulong)((long)size)), IntPtr.Zero);
-						}
-						else
-						{
-							bool flag10 = !text.Contains("base") && !text.Contains("main") && text.Contains("+");
-							if (flag10)
-							{
-								string[] array5 = text.Split(new char[]
-								{
-									'+'
-								});
-								IntPtr value = IntPtr.Zero;
-								bool flag11 = !array5[0].ToLower().Contains(".dll") && !array5[0].ToLower().Contains(".exe") && !array5[0].ToLower().Contains(".bin");
-								if (flag11)
-								{
-									value = (IntPtr)long.Parse(array5[0], NumberStyles.HexNumber);
-								}
-								else
-								{
-									try
-									{
-										value = this.modules[array5[0]];
-									}
-									catch
-									{
-										Debug.WriteLine("Module " + array5[0] + " was not found in module list!");
-										Debug.WriteLine("Modules: " + string.Join<KeyValuePair<string, IntPtr>>(",", this.modules));
-									}
-								}
-								UnovaMem.ReadProcessMemory(this.pHandle, (UIntPtr)((ulong)((long)value + array4[0])), array, (UIntPtr)((ulong)((long)size)), IntPtr.Zero);
-							}
-							else
-							{
-								UnovaMem.ReadProcessMemory(this.pHandle, (UIntPtr)((ulong)array4[0]), array, (UIntPtr)((ulong)((long)size)), IntPtr.Zero);
-							}
-						}
-						long num2 = BitConverter.ToInt64(array, 0);
-						UIntPtr uintPtr = (UIntPtr)0UL;
-						for (int j = 1; j < array4.Length; j++)
-						{
-							uintPtr = new UIntPtr(Convert.ToUInt64(num2 + array4[j]));
-							UnovaMem.ReadProcessMemory(this.pHandle, uintPtr, array, (UIntPtr)((ulong)((long)size)), IntPtr.Zero);
-							num2 = BitConverter.ToInt64(array, 0);
-						}
-						result = uintPtr;
-					}
-					else
-					{
-						long num3 = Convert.ToInt64(text2, 16);
-						IntPtr value2 = IntPtr.Zero;
-						bool flag12 = text.Contains("base") || text.Contains("main");
-						if (flag12)
-						{
-							value2 = this.mainModule.BaseAddress;
-						}
-						else
-						{
-							bool flag13 = !text.Contains("base") && !text.Contains("main") && text.Contains("+");
-							if (flag13)
-							{
-								string[] array6 = text.Split(new char[]
-								{
-									'+'
-								});
-								bool flag14 = !array6[0].ToLower().Contains(".dll") && !array6[0].ToLower().Contains(".exe") && !array6[0].ToLower().Contains(".bin");
-								if (flag14)
-								{
-									string text5 = array6[0];
-									bool flag15 = text5.Contains("0x");
-									if (flag15)
-									{
-										text5 = text5.Replace("0x", "");
-									}
-									value2 = (IntPtr)long.Parse(text5, NumberStyles.HexNumber);
-								}
-								else
-								{
-									try
-									{
-										value2 = this.modules[array6[0]];
-									}
-									catch
-									{
-										Debug.WriteLine("Module " + array6[0] + " was not found in module list!");
-										Debug.WriteLine("Modules: " + string.Join<KeyValuePair<string, IntPtr>>(",", this.modules));
-									}
-								}
-							}
-							else
-							{
-								value2 = this.modules[text.Split(new char[]
-								{
-									'+'
-								})[0]];
-							}
-						}
-						result = (UIntPtr)((ulong)((long)value2 + num3));
-					}
-				}
-			}
-			return result;
-		}
-		public UIntPtr GetCode(string name, string path = "", int size = 8)
-		{
-			bool is64Bit = this.Is64Bit;
-			UIntPtr result;
-			if (is64Bit)
-			{
-				bool flag = size == 8;
-				if (flag)
-				{
-					size = 16;
-				}
-				result = this.Get64BitCode(name, path, size);
-			}
-			else
-			{
-				bool flag2 = path != "";
-				string text;
-				if (flag2)
-				{
-					text = this.LoadCode(name, path);
-				}
-				else
-				{
-					text = name;
-				}
-				bool flag3 = text == "";
-				if (flag3)
-				{
-					result = UIntPtr.Zero;
-				}
-				else
-				{
-					bool flag4 = text.Contains(" ");
-					if (flag4)
-					{
-						text.Replace(" ", string.Empty);
-					}
-					bool flag5 = !text.Contains("+") && !text.Contains(",");
-					if (flag5)
-					{
-						result = new UIntPtr(Convert.ToUInt32(text, 16));
-					}
-					else
-					{
-						string text2 = text;
-						bool flag6 = text.Contains("+");
-						if (flag6)
-						{
-							text2 = text.Substring(text.IndexOf('+') + 1);
-						}
-						byte[] array = new byte[size];
-						bool flag7 = text2.Contains(',');
-						if (flag7)
-						{
-							List<int> list = new List<int>();
-							string[] array2 = text2.Split(new char[]
-							{
-								','
-							});
-							foreach (string text3 in array2)
-							{
-								string text4 = text3;
-								bool flag8 = text3.Contains("0x");
-								if (flag8)
-								{
-									text4 = text3.Replace("0x", "");
-								}
-								bool flag9 = !text3.Contains("-");
-								int num;
-								if (flag9)
-								{
-									num = int.Parse(text4, NumberStyles.AllowHexSpecifier);
-								}
-								else
-								{
-									text4 = text4.Replace("-", "");
-									num = int.Parse(text4, NumberStyles.AllowHexSpecifier);
-									num *= -1;
-								}
-								list.Add(num);
-							}
-							int[] array4 = list.ToArray();
-							bool flag10 = text.Contains("base") || text.Contains("main");
-							if (flag10)
-							{
-								UnovaMem.ReadProcessMemory(this.pHandle, (UIntPtr)((ulong)((long)((int)this.mainModule.BaseAddress + array4[0]))), array, (UIntPtr)((ulong)((long)size)), IntPtr.Zero);
-							}
-							else
-							{
-								bool flag11 = !text.Contains("base") && !text.Contains("main") && text.Contains("+");
-								if (flag11)
-								{
-									string[] array5 = text.Split(new char[]
-									{
-										'+'
-									});
-									IntPtr value = IntPtr.Zero;
-									bool flag12 = !array5[0].ToLower().Contains(".dll") && !array5[0].ToLower().Contains(".exe") && !array5[0].ToLower().Contains(".bin");
-									if (flag12)
-									{
-										string text5 = array5[0];
-										bool flag13 = text5.Contains("0x");
-										if (flag13)
-										{
-											text5 = text5.Replace("0x", "");
-										}
-										value = (IntPtr)int.Parse(text5, NumberStyles.HexNumber);
-									}
-									else
-									{
-										try
-										{
-											value = this.modules[array5[0]];
-										}
-										catch
-										{
-											Debug.WriteLine("Module " + array5[0] + " was not found in module list!");
-											Debug.WriteLine("Modules: " + string.Join<KeyValuePair<string, IntPtr>>(",", this.modules));
-										}
-									}
-									UnovaMem.ReadProcessMemory(this.pHandle, (UIntPtr)((ulong)((long)((int)value + array4[0]))), array, (UIntPtr)((ulong)((long)size)), IntPtr.Zero);
-								}
-								else
-								{
-									UnovaMem.ReadProcessMemory(this.pHandle, (UIntPtr)((ulong)((long)array4[0])), array, (UIntPtr)((ulong)((long)size)), IntPtr.Zero);
-								}
-							}
-							uint num2 = BitConverter.ToUInt32(array, 0);
-							UIntPtr uintPtr = (UIntPtr)0UL;
-							for (int j = 1; j < array4.Length; j++)
-							{
-								uintPtr = new UIntPtr(Convert.ToUInt32((long)((ulong)num2 + (ulong)((long)array4[j]))));
-								UnovaMem.ReadProcessMemory(this.pHandle, uintPtr, array, (UIntPtr)((ulong)((long)size)), IntPtr.Zero);
-								num2 = BitConverter.ToUInt32(array, 0);
-							}
-							result = uintPtr;
-						}
-						else
-						{
-							int num3 = Convert.ToInt32(text2, 16);
-							IntPtr value2 = IntPtr.Zero;
-							bool flag14 = text.ToLower().Contains("base") || text.ToLower().Contains("main");
-							if (flag14)
-							{
-								value2 = this.mainModule.BaseAddress;
-							}
-							else
-							{
-								bool flag15 = !text.ToLower().Contains("base") && !text.ToLower().Contains("main") && text.Contains("+");
-								if (flag15)
-								{
-									string[] array6 = text.Split(new char[]
-									{
-										'+'
-									});
-									bool flag16 = !array6[0].ToLower().Contains(".dll") && !array6[0].ToLower().Contains(".exe") && !array6[0].ToLower().Contains(".bin");
-									if (flag16)
-									{
-										string text6 = array6[0];
-										bool flag17 = text6.Contains("0x");
-										if (flag17)
-										{
-											text6 = text6.Replace("0x", "");
-										}
-										value2 = (IntPtr)int.Parse(text6, NumberStyles.HexNumber);
-									}
-									else
-									{
-										try
-										{
-											value2 = this.modules[array6[0]];
-										}
-										catch
-										{
-											Debug.WriteLine("Module " + array6[0] + " was not found in module list!");
-											Debug.WriteLine("Modules: " + string.Join<KeyValuePair<string, IntPtr>>(",", this.modules));
-										}
-									}
-								}
-								else
-								{
-									value2 = this.modules[text.Split(new char[]
-									{
-										'+'
-									})[0]];
-								}
-							}
-							result = (UIntPtr)((ulong)((long)((int)value2 + num3)));
-						}
-					}
-				}
-			}
-			return result;
-		}
-		public bool WriteMemory(string code, string type, string write, string file = "", Encoding stringEncoding = null)
-		{
-			byte[] array = new byte[4];
-			int num = 4;
-			UIntPtr code2 = this.GetCode(code, file, 8);
-			bool flag = type.ToLower() == "float";
-			if (flag)
-			{
-				array = BitConverter.GetBytes(Convert.ToSingle(write));
-				num = 4;
-			}
-			else
-			{
-				bool flag2 = type.ToLower() == "int";
-				if (flag2)
-				{
-					array = BitConverter.GetBytes(Convert.ToInt32(write));
-					num = 4;
-				}
-				else
-				{
-					bool flag3 = type.ToLower() == "byte";
-					if (flag3)
-					{
-						array = new byte[]
-						{
-							Convert.ToByte(write, 16)
-						};
-						num = 1;
-					}
-					else
-					{
-						bool flag4 = type.ToLower() == "2bytes";
-						if (flag4)
-						{
-							array = new byte[]
-							{
-								(byte)(Convert.ToInt32(write) % 256),
-								(byte)(Convert.ToInt32(write) / 256)
-							};
-							num = 2;
-						}
-						else
-						{
-							bool flag5 = type.ToLower() == "bytes";
-							if (flag5)
-							{
-								bool flag6 = write.Contains(",") || write.Contains(" ");
-								if (flag6)
-								{
-									bool flag7 = write.Contains(",");
-									string[] array2;
-									if (flag7)
-									{
-										array2 = write.Split(new char[]
-										{
-											','
-										});
-									}
-									else
-									{
-										array2 = write.Split(new char[]
-										{
-											' '
-										});
-									}
-									int num2 = array2.Count<string>();
-									array = new byte[num2];
-									for (int i = 0; i < num2; i++)
-									{
-										array[i] = Convert.ToByte(array2[i], 16);
-									}
-									num = array2.Count<string>();
-								}
-								else
-								{
-									array = new byte[]
-									{
-										Convert.ToByte(write, 16)
-									};
-									num = 1;
-								}
-							}
-							else
-							{
-								bool flag8 = type.ToLower() == "double";
-								if (flag8)
-								{
-									array = BitConverter.GetBytes(Convert.ToDouble(write));
-									num = 8;
-								}
-								else
-								{
-									bool flag9 = type.ToLower() == "long";
-									if (flag9)
-									{
-										array = BitConverter.GetBytes(Convert.ToInt64(write));
-										num = 8;
-									}
-									else
-									{
-										bool flag10 = type.ToLower() == "string";
-										if (flag10)
-										{
-											bool flag11 = stringEncoding == null;
-											if (flag11)
-											{
-												array = Encoding.UTF8.GetBytes(write);
-											}
-											else
-											{
-												array = stringEncoding.GetBytes(write);
-											}
-											num = array.Length;
-										}
-									}
-								}
-							}
-						}
-					}
-				}
-			}
-			return UnovaMem.WriteProcessMemory(this.pHandle, code2, array, (UIntPtr)((ulong)((long)num)), IntPtr.Zero);
-		}
-		public bool IsAdmin()
-		{
-			bool result;
-			using (WindowsIdentity current = WindowsIdentity.GetCurrent())
-			{
-				WindowsPrincipal windowsPrincipal = new WindowsPrincipal(current);
-				result = windowsPrincipal.IsInRole(WindowsBuiltInRole.Administrator);
-			}
-			return result;
-		}
-		public bool OpenProcess(int pid)
-		{
-			bool flag = !this.IsAdmin();
-			if (flag)
-			{
-				Debug.WriteLine("WARNING: You are NOT running this program as admin! Visit https://discord.gg/emmWnPRrYX");
-				notify("WARNING: You are NOT running this program as admin! For More Help Visit https://discord.gg/emmWnPRrYX");
-			}
-			bool flag2 = pid <= 0;
-			bool result;
-			if (flag2)
-			{
-				Debug.WriteLine("ERROR: OpenProcess given proc ID 0.");
-				result = false;
-			}
-			else
-			{
-				bool flag3 = this.theProc != null && this.theProc.Id == pid;
-				if (flag3)
-				{
-					result = true;
-				}
-				else
-				{
-					try
-					{
-						this.theProc = Process.GetProcessById(pid);
-						bool flag4 = this.theProc != null && !this.theProc.Responding;
-						if (flag4)
-						{
-							Debug.WriteLine("ERROR: OpenProcess: Process is not responding or null.");
-							result = false;
-						}
-						else
-						{
-							this.pHandle = UnovaMem.OpenProcess(2035711U, true, pid);
-							Process.EnterDebugMode();
-							bool flag5 = this.pHandle == IntPtr.Zero;
-							if (flag5)
-							{
-								Debug.WriteLine("ERROR: OpenProcess has failed opening a handle to the target process (GetLastWin32ErrorCode: " + Marshal.GetLastWin32Error().ToString() + ")");
-								Process.LeaveDebugMode();
-								this.theProc = null;
-								result = false;
-							}
-							else
-							{
-								this.mainModule = this.theProc.MainModule;
-								this.GetModules();
-								bool flag6;
-								this.Is64Bit = (Environment.Is64BitOperatingSystem && UnovaMem.IsWow64Process(this.pHandle, out flag6) && !flag6);
-								string str = "Program is operating at Administrative level. Process #";
-								Process process = this.theProc;
-								Debug.WriteLine(str + ((process != null) ? process.ToString() : null) + " is open and modules are stored.");
-								result = true;
-							}
-						}
-					}
-					catch
-					{
-						result = false;
-					}
-				}
-			}
-			return result;
-		}
-		public void GetModules()
-		{
-			bool flag = this.theProc == null;
-			if (!flag)
-			{
-				this.modules.Clear();
-				foreach (object obj in this.theProc.Modules)
-				{
-					ProcessModule processModule = (ProcessModule)obj;
-					bool flag2 = !string.IsNullOrEmpty(processModule.ModuleName) && !this.modules.ContainsKey(processModule.ModuleName);
-					if (flag2)
-					{
-						this.modules.Add(processModule.ModuleName, processModule.BaseAddress);
-					}
-				}
-			}
-		}
-		public Task<IEnumerable<long>> AoBScan2(string search, bool writable = false, bool executable = false, string file = "")
-		{
-			return this.AoBScan(0L, long.MaxValue, search, writable, executable, file);
-		}
-		public Task<IEnumerable<long>> AoBScan(long start, long end, string search, bool writable, bool executable, string file = "")
-		{
-			return this.AoBScan(start, end, search, true, writable, executable, file);
-		}
-		public bool ChangeProtection(string code, UnovaMem.MemoryProtection newProtection, out UnovaMem.MemoryProtection oldProtection, string file = "")
-		{
-			UIntPtr code2 = this.GetCode(code, file, 8);
-			bool flag = code2 == UIntPtr.Zero || this.pHandle == IntPtr.Zero;
-			bool result;
-			if (flag)
-			{
-				oldProtection = (UnovaMem.MemoryProtection)0U;
-				result = false;
-			}
-			else
-			{
-				result = UnovaMem.VirtualProtectEx(this.pHandle, code2, (IntPtr)(this.Is64Bit ? 8 : 4), newProtection, out oldProtection);
-			}
-			return result;
-		}
-		private Dictionary<string, IntPtr> modules = new Dictionary<string, IntPtr>();
-		private ProcessModule mainModule;
-		public Process theProc = null;
-		private uint MEM_PRIVATE = 131072U;
-		private uint MEM_IMAGE = 16777216U;
-		public IntPtr pHandle;
-		[Flags]
-		public enum ThreadAccess
-		{
-			TERMINATE = 1,
-			SUSPEND_RESUME = 2,
-			GET_CONTEXT = 8,
-			SET_CONTEXT = 16,
-			SET_INFORMATION = 32,
-			QUERY_INFORMATION = 64,
-			SET_THREAD_TOKEN = 128,
-			IMPERSONATE = 256,
-			DIRECT_IMPERSONATION = 512
-		}
-		public struct MEMORY_BASIC_INFORMATION32
-		{
-			public UIntPtr BaseAddress;
+        private UIntPtr Get64BitCode(string code, string file, int size)
+        {
+            string address = !string.IsNullOrEmpty(file) ? LoadCode(code, file) : code;
+            
+            if (string.IsNullOrWhiteSpace(address))
+                return UIntPtr.Zero;
 
-			public UIntPtr AllocationBase;
+            address = address.Replace(" ", "");
 
-			public uint AllocationProtect;
+            // Direct address (no offsets)
+            if (!address.Contains("+") && !address.Contains(","))
+            {
+                return new UIntPtr(Convert.ToUInt64(address, 16));
+            }
 
-			public uint RegionSize;
+            // Parse base and offsets
+            string[] parts = address.Split('+');
+            string basePart = parts[0];
+            string offsetPart = parts.Length > 1 ? parts[1] : "";
 
-			public uint State;
+            // Get base address
+            IntPtr baseAddress = GetBaseAddress(basePart);
+            if (baseAddress == IntPtr.Zero && !basePart.Contains("base") && !basePart.Contains("main"))
+            {
+                return UIntPtr.Zero;
+            }
 
-			public uint Protect;
+            // No pointer chain
+            if (!offsetPart.Contains(','))
+            {
+                long offset = string.IsNullOrEmpty(offsetPart) ? 0 : Convert.ToInt64(offsetPart, 16);
+                return new UIntPtr((ulong)((long)baseAddress + offset));
+            }
 
-			public uint Type;
-		}
-		public struct MEMORY_BASIC_INFORMATION64
-		{
-			public UIntPtr BaseAddress;
+            // Pointer chain
+            long[] offsets = ParseOffsets(offsetPart);
+            return ResolvePointerChain64(baseAddress, offsets, size);
+        }
 
-			public UIntPtr AllocationBase;
+        private UIntPtr Get32BitCode(string code, string file, int size)
+        {
+            string address = !string.IsNullOrEmpty(file) ? LoadCode(code, file) : code;
+            
+            if (string.IsNullOrWhiteSpace(address))
+                return UIntPtr.Zero;
 
-			public uint AllocationProtect;
+            address = address.Replace(" ", "");
 
-			public uint __alignment1;
+            if (!address.Contains("+") && !address.Contains(","))
+            {
+                return new UIntPtr(Convert.ToUInt32(address, 16));
+            }
 
-			public ulong RegionSize;
+            string[] parts = address.Split('+');
+            string basePart = parts[0];
+            string offsetPart = parts.Length > 1 ? parts[1] : "";
 
-			public uint State;
+            IntPtr baseAddress = GetBaseAddress(basePart);
+            if (baseAddress == IntPtr.Zero && !basePart.Contains("base") && !basePart.Contains("main"))
+            {
+                return UIntPtr.Zero;
+            }
 
-			public uint Protect;
+            if (!offsetPart.Contains(','))
+            {
+                int offset = string.IsNullOrEmpty(offsetPart) ? 0 : Convert.ToInt32(offsetPart, 16);
+                return new UIntPtr((uint)((int)baseAddress + offset));
+            }
 
-			public uint Type;
+            long[] offsets = ParseOffsets(offsetPart);
+            return ResolvePointerChain32(baseAddress, offsets, size);
+        }
 
-			public uint __alignment2;
-		}
-		[Flags]
-		public enum MemoryProtection : uint
-		{
-			Execute = 16U,
-			ExecuteRead = 32U,
-			ExecuteReadWrite = 64U,
-			ExecuteWriteCopy = 128U,
-			NoAccess = 1U,
-			ReadOnly = 2U,
-			ReadWrite = 4U,
-			WriteCopy = 8U,
-			GuardModifierflag = 256U,
-			NoCacheModifierflag = 512U,
-			WriteCombineModifierflag = 1024U
-		}
-		public struct SYSTEM_INFO
-		{
-			public ushort processorArchitecture;
+        private IntPtr GetBaseAddress(string basePart)
+        {
+            if (basePart.Contains("base") || basePart.Contains("main"))
+            {
+                return _mainModule?.BaseAddress ?? IntPtr.Zero;
+            }
 
-			private ushort reserved;
+            if (basePart.EndsWith(".dll") || basePart.EndsWith(".exe") || basePart.EndsWith(".bin"))
+            {
+                return _modules.TryGetValue(basePart, out IntPtr moduleBase) ? moduleBase : IntPtr.Zero;
+            }
 
-			public uint pageSize;
+            string cleaned = basePart.Replace("0x", "");
+            return _is64Bit ? (IntPtr)long.Parse(cleaned, NumberStyles.HexNumber) 
+                            : (IntPtr)int.Parse(cleaned, NumberStyles.HexNumber);
+        }
 
-			public UIntPtr minimumApplicationAddress;
+        private long[] ParseOffsets(string offsetString)
+        {
+            string[] parts = offsetString.Split(',');
+            long[] offsets = new long[parts.Length];
 
-			public UIntPtr maximumApplicationAddress;
+            for (int i = 0; i < parts.Length; i++)
+            {
+                string offset = parts[i].Replace("0x", "").Trim();
+                bool isNegative = offset.StartsWith("-");
+                
+                if (isNegative)
+                    offset = offset.Substring(1);
 
-			public IntPtr activeProcessorMask;
+                offsets[i] = long.Parse(offset, NumberStyles.HexNumber);
+                
+                if (isNegative)
+                    offsets[i] = -offsets[i];
+            }
 
-			public uint numberOfProcessors;
+            return offsets;
+        }
 
-			public uint processorType;
+        private UIntPtr ResolvePointerChain64(IntPtr baseAddress, long[] offsets, int size)
+        {
+            byte[] buffer = new byte[size];
+            long currentAddress = (long)baseAddress + offsets[0];
 
-			public uint allocationGranularity;
+            if (!ReadProcessMemory(_pHandle, (UIntPtr)(ulong)currentAddress, buffer, (UIntPtr)(ulong)size, IntPtr.Zero))
+                return UIntPtr.Zero;
 
-			public ushort processorLevel;
+            for (int i = 1; i < offsets.Length; i++)
+            {
+                currentAddress = BitConverter.ToInt64(buffer, 0) + offsets[i];
+                
+                if (!ReadProcessMemory(_pHandle, (UIntPtr)(ulong)currentAddress, buffer, (UIntPtr)(ulong)size, IntPtr.Zero))
+                    return UIntPtr.Zero;
+            }
 
-			public ushort processorRevision;
-		}
-		public struct MEMORY_BASIC_INFORMATION
-		{
-			public UIntPtr BaseAddress;
+            return (UIntPtr)(ulong)currentAddress;
+        }
 
-			public UIntPtr AllocationBase;
+        private UIntPtr ResolvePointerChain32(IntPtr baseAddress, long[] offsets, int size)
+        {
+            byte[] buffer = new byte[size];
+            uint currentAddress = (uint)((int)baseAddress + (int)offsets[0]);
 
-			public uint AllocationProtect;
+            if (!ReadProcessMemory(_pHandle, (UIntPtr)currentAddress, buffer, (UIntPtr)(ulong)size, IntPtr.Zero))
+                return UIntPtr.Zero;
 
-			public long RegionSize;
+            for (int i = 1; i < offsets.Length; i++)
+            {
+                currentAddress = BitConverter.ToUInt32(buffer, 0) + (uint)offsets[i];
+                
+                if (!ReadProcessMemory(_pHandle, (UIntPtr)currentAddress, buffer, (UIntPtr)(ulong)size, IntPtr.Zero))
+                    return UIntPtr.Zero;
+            }
 
-			public uint State;
+            return (UIntPtr)currentAddress;
+        }
+        #endregion
 
-			public uint Protect;
+        #region AOB Scanning - Optimized
+        public Task<IEnumerable<long>> AoBScan(long start, long end, string search, bool readable = true, 
+            bool writable = false, bool executable = false, string file = "")
+        {
+            return Task.Run(() => PerformAoBScan(start, end, search, readable, writable, executable, file));
+        }
 
-			public uint Type;
-		}
-		private int x;
+        public Task<IEnumerable<long>> AoBScan(string search, bool writable = false, bool executable = false, string file = "")
+        {
+            return AoBScan(0L, long.MaxValue, search, true, writable, executable, file);
+        }
 
-	}
-	#endregion
-	#region Beyond-region-result
-	internal struct MemoryRegionResult
-	{
-		public UIntPtr CurrentBaseAddress { get; set; }
+        private IEnumerable<long> PerformAoBScan(long start, long end, string search, bool readable, 
+            bool writable, bool executable, string file)
+        {
+            string pattern = !string.IsNullOrEmpty(file) ? LoadCode(search, file) : search;
+            byte[] aobPattern;
+            byte[] mask;
+            ParseAobPattern(pattern, out aobPattern, out mask);
 
-		public long RegionSize { get; set; }
+            SYSTEM_INFO sysInfo;
+            GetSystemInfo(out sysInfo);
 
-		public UIntPtr RegionBase { get; set; }
-	}
-	#endregion
+            UIntPtr minAddress = sysInfo.minimumApplicationAddress;
+            UIntPtr maxAddress = sysInfo.maximumApplicationAddress;
+
+            if (start < (long)minAddress.ToUInt64())
+                start = (long)minAddress.ToUInt64();
+            
+            if (end > (long)maxAddress.ToUInt64())
+                end = (long)maxAddress.ToUInt64();
+
+            Debug.WriteLine($"[AOB] Scan started: 0x{start:X} - 0x{end:X}");
+
+            var regions = CollectMemoryRegions(start, end, minAddress, maxAddress, readable, writable, executable);
+            var results = new ConcurrentBag<long>();
+
+            // Use parallel processing with limited degree to reduce CPU usage
+            var options = new ParallelOptions 
+            { 
+                MaxDegreeOfParallelism = Environment.ProcessorCount / 2 // Use half of available cores
+            };
+
+            Parallel.ForEach(regions, options, region =>
+            {
+                long[] matches = ScanRegion(region, aobPattern, mask);
+                foreach (long match in matches)
+                {
+                    results.Add(match);
+                }
+            });
+
+            Debug.WriteLine($"[AOB] Scan completed. Found {results.Count} results.");
+
+            return results.OrderBy(x => x);
+        }
+
+        private void ParseAobPattern(string pattern, out byte[] aobPattern, out byte[] mask)
+        {
+            string[] parts = pattern.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+            aobPattern = new byte[parts.Length];
+            mask = new byte[parts.Length];
+
+            for (int i = 0; i < parts.Length; i++)
+            {
+                string part = parts[i];
+
+                if (part == "??" || part == "?")
+                {
+                    mask[i] = 0x00;
+                    aobPattern[i] = 0x00;
+                }
+                else if (part.Length == 2 && part[1] == '?')
+                {
+                    mask[i] = 0xF0;
+                    aobPattern[i] = (byte)(Convert.ToByte(part[0].ToString(), 16) << 4);
+                }
+                else if (part.Length == 2 && part[0] == '?')
+                {
+                    mask[i] = 0x0F;
+                    aobPattern[i] = Convert.ToByte(part[1].ToString(), 16);
+                }
+                else
+                {
+                    mask[i] = 0xFF;
+                    aobPattern[i] = Convert.ToByte(part, 16);
+                }
+            }
+        }
+
+        private List<MemoryRegionResult> CollectMemoryRegions(long start, long end, UIntPtr minAddress, 
+            UIntPtr maxAddress, bool readable, bool writable, bool executable)
+        {
+            var regions = new List<MemoryRegionResult>();
+            UIntPtr address = new UIntPtr((ulong)start);
+            MEMORY_BASIC_INFORMATION memInfo;
+
+            while (VirtualQueryEx(_pHandle, address, out memInfo).ToUInt64() != 0 &&
+                   address.ToUInt64() < (ulong)end &&
+                   address.ToUInt64() + (ulong)memInfo.RegionSize > address.ToUInt64())
+            {
+                bool isValid = memInfo.State == 0x1000 && // MEM_COMMIT
+                              memInfo.BaseAddress.ToUInt64() < maxAddress.ToUInt64() &&
+                              (memInfo.Protect & 0x100) == 0 && // PAGE_GUARD
+                              (memInfo.Protect & 0x01) == 0 && // PAGE_NOACCESS
+                              (memInfo.Type == MEM_PRIVATE || memInfo.Type == MEM_IMAGE);
+
+                if (isValid)
+                {
+                    bool read = (memInfo.Protect & 0x02) > 0;
+                    bool write = (memInfo.Protect & 0x04) > 0 || (memInfo.Protect & 0x08) > 0 ||
+                                (memInfo.Protect & 0x40) > 0 || (memInfo.Protect & 0x80) > 0;
+                    bool exec = (memInfo.Protect & 0x10) > 0 || (memInfo.Protect & 0x20) > 0 ||
+                               (memInfo.Protect & 0x40) > 0 || (memInfo.Protect & 0x80) > 0;
+
+                    isValid = (read && readable) || (write && writable) || (exec && executable);
+                }
+
+                if (isValid)
+                {
+                    var region = new MemoryRegionResult
+                    {
+                        CurrentBaseAddress = address,
+                        RegionSize = memInfo.RegionSize,
+                        RegionBase = memInfo.BaseAddress
+                    };
+
+                    // Merge contiguous regions
+                    if (regions.Count > 0)
+                    {
+                        var last = regions[regions.Count - 1];
+                        if ((ulong)last.RegionBase + (ulong)last.RegionSize == (ulong)memInfo.BaseAddress)
+                        {
+                            regions[regions.Count - 1] = new MemoryRegionResult
+                            {
+                                CurrentBaseAddress = last.CurrentBaseAddress,
+                                RegionBase = last.RegionBase,
+                                RegionSize = last.RegionSize + memInfo.RegionSize
+                            };
+                        }
+                        else
+                        {
+                            regions.Add(region);
+                        }
+                    }
+                    else
+                    {
+                        regions.Add(region);
+                    }
+                }
+
+                address = new UIntPtr(memInfo.BaseAddress.ToUInt64() + (ulong)memInfo.RegionSize);
+            }
+
+            return regions;
+        }
+
+        private unsafe long[] ScanRegion(MemoryRegionResult region, byte[] pattern, byte[] mask)
+        {
+            IntPtr buffer = Marshal.AllocHGlobal((int)region.RegionSize);
+            
+            try
+            {
+                ulong bytesRead;
+                if (!ReadProcessMemory(_pHandle, region.CurrentBaseAddress, buffer, 
+                    (UIntPtr)(ulong)region.RegionSize, out bytesRead))
+                {
+                    return new long[0];
+                }
+
+                var results = new List<long>();
+                byte* ptr = (byte*)buffer.ToPointer();
+                int offset = -pattern.Length;
+
+                while (true)
+                {
+                    offset = FindPattern(ptr, (int)bytesRead, pattern, mask, offset + pattern.Length);
+                    
+                    if (offset < 0)
+                        break;
+
+                    results.Add((long)region.CurrentBaseAddress.ToUInt64() + offset);
+                }
+
+                return results.ToArray();
+            }
+            finally
+            {
+                Marshal.FreeHGlobal(buffer);
+            }
+        }
+
+        private unsafe int FindPattern(byte* data, int dataLength, byte[] pattern, byte[] mask, int start = 0)
+        {
+            if (dataLength <= 0 || pattern.Length == 0 || start > dataLength - pattern.Length)
+                return -1;
+
+            int maxIndex = dataLength - pattern.Length;
+
+            for (int i = start; i <= maxIndex; i++)
+            {
+                if ((data[i] & mask[0]) != (pattern[0] & mask[0]))
+                    continue;
+
+                bool found = true;
+                for (int j = 1; j < pattern.Length; j++)
+                {
+                    if ((data[i + j] & mask[j]) != (pattern[j] & mask[j]))
+                    {
+                        found = false;
+                        break;
+                    }
+                }
+
+                if (found)
+                    return i;
+            }
+
+            return -1;
+        }
+        #endregion
+
+        #region Memory Protection
+        public bool ChangeProtection(string code, MemoryProtection newProtection, 
+            out MemoryProtection oldProtection, string file = "")
+        {
+            UIntPtr address = GetCode(code, file);
+            
+            if (address == UIntPtr.Zero || _pHandle == IntPtr.Zero)
+            {
+                oldProtection = 0;
+                return false;
+            }
+
+            return VirtualProtectEx(_pHandle, address, (IntPtr)(_is64Bit ? 8 : 4), 
+                newProtection, out oldProtection);
+        }
+
+        public UIntPtr VirtualQueryEx(IntPtr hProcess, UIntPtr lpAddress, out MEMORY_BASIC_INFORMATION lpBuffer)
+        {
+            if (_is64Bit || IntPtr.Size == 8)
+            {
+                MEMORY_BASIC_INFORMATION64 memInfo64;
+                UIntPtr result = Native_VirtualQueryEx(hProcess, lpAddress, out memInfo64, 
+                    new UIntPtr((uint)Marshal.SizeOf<MEMORY_BASIC_INFORMATION64>()));
+
+                lpBuffer = new MEMORY_BASIC_INFORMATION
+                {
+                    BaseAddress = memInfo64.BaseAddress,
+                    AllocationBase = memInfo64.AllocationBase,
+                    AllocationProtect = memInfo64.AllocationProtect,
+                    RegionSize = (long)memInfo64.RegionSize,
+                    State = memInfo64.State,
+                    Protect = memInfo64.Protect,
+                    Type = memInfo64.Type
+                };
+
+                return result;
+            }
+            else
+            {
+                MEMORY_BASIC_INFORMATION32 memInfo32;
+                UIntPtr result = Native_VirtualQueryEx(hProcess, lpAddress, out memInfo32, 
+                    new UIntPtr((uint)Marshal.SizeOf<MEMORY_BASIC_INFORMATION32>()));
+
+                lpBuffer = new MEMORY_BASIC_INFORMATION
+                {
+                    BaseAddress = memInfo32.BaseAddress,
+                    AllocationBase = memInfo32.AllocationBase,
+                    AllocationProtect = memInfo32.AllocationProtect,
+                    RegionSize = memInfo32.RegionSize,
+                    State = memInfo32.State,
+                    Protect = memInfo32.Protect,
+                    Type = memInfo32.Type
+                };
+
+                return result;
+            }
+        }
+        #endregion
+
+        #region Utilities
+        public string LoadCode(string name, string file)
+        {
+            if (string.IsNullOrEmpty(file))
+                return name;
+
+            var sb = new StringBuilder(1024);
+            GetPrivateProfileString("codes", name, "", sb, (uint)sb.Capacity, file);
+            return sb.ToString();
+        }
+
+        public string MSize()
+        {
+            return _is64Bit ? "X16" : "X8";
+        }
+
+        public static bool IsAdmin()
+        {
+            using (var identity = WindowsIdentity.GetCurrent())
+            {
+                var principal = new WindowsPrincipal(identity);
+                return principal.IsInRole(WindowsBuiltInRole.Administrator);
+            }
+        }
+
+        public static void Notify(string message)
+        {
+            try
+            {
+                Process.Start(new ProcessStartInfo("cmd.exe", 
+                    $"/c start cmd /C \"color b && title Error && echo {message} && timeout /t 5\"")
+                {
+                    CreateNoWindow = true,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    UseShellExecute = false
+                });
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"Failed to show notification: {ex.Message}");
+            }
+        }
+        #endregion
+
+        #region Structures and Enums
+        [StructLayout(LayoutKind.Sequential)]
+        public struct MEMORY_BASIC_INFORMATION32
+        {
+            public UIntPtr BaseAddress;
+            public UIntPtr AllocationBase;
+            public uint AllocationProtect;
+            public uint RegionSize;
+            public uint State;
+            public uint Protect;
+            public uint Type;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct MEMORY_BASIC_INFORMATION64
+        {
+            public UIntPtr BaseAddress;
+            public UIntPtr AllocationBase;
+            public uint AllocationProtect;
+            public uint __alignment1;
+            public ulong RegionSize;
+            public uint State;
+            public uint Protect;
+            public uint Type;
+            public uint __alignment2;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct MEMORY_BASIC_INFORMATION
+        {
+            public UIntPtr BaseAddress;
+            public UIntPtr AllocationBase;
+            public uint AllocationProtect;
+            public long RegionSize;
+            public uint State;
+            public uint Protect;
+            public uint Type;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct SYSTEM_INFO
+        {
+            public ushort processorArchitecture;
+            private ushort reserved;
+            public uint pageSize;
+            public UIntPtr minimumApplicationAddress;
+            public UIntPtr maximumApplicationAddress;
+            public IntPtr activeProcessorMask;
+            public uint numberOfProcessors;
+            public uint processorType;
+            public uint allocationGranularity;
+            public ushort processorLevel;
+            public ushort processorRevision;
+        }
+
+        [Flags]
+        public enum MemoryProtection : uint
+        {
+            NoAccess = 0x01,
+            ReadOnly = 0x02,
+            ReadWrite = 0x04,
+            WriteCopy = 0x08,
+            Execute = 0x10,
+            ExecuteRead = 0x20,
+            ExecuteReadWrite = 0x40,
+            ExecuteWriteCopy = 0x80,
+            Guard = 0x100,
+            NoCache = 0x200,
+            WriteCombine = 0x400
+        }
+
+        [Flags]
+        public enum ThreadAccess
+        {
+            TERMINATE = 0x0001,
+            SUSPEND_RESUME = 0x0002,
+            GET_CONTEXT = 0x0008,
+            SET_CONTEXT = 0x0010,
+            SET_INFORMATION = 0x0020,
+            QUERY_INFORMATION = 0x0040,
+            SET_THREAD_TOKEN = 0x0080,
+            IMPERSONATE = 0x0100,
+            DIRECT_IMPERSONATION = 0x0200
+        }
+        #endregion
+    }
+
+    internal struct MemoryRegionResult
+    {
+        public UIntPtr CurrentBaseAddress { get; set; }
+        public long RegionSize { get; set; }
+        public UIntPtr RegionBase { get; set; }
+    }
 }
